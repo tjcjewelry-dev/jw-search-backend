@@ -62,7 +62,7 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`\n💎  Jewelry API → http://localhost:${PORT}`);
-  console.log(`   Uploads     → http://localhost:${PORT}/uploads`);
-  console.log(`   Health      → http://localhost:${PORT}/api/health\n`);
+  console.log(`\n💎  Jewelry API → ${process.env.HOST_URL}`);
+  console.log(`   Uploads     → ${process.env.HOST_URL}/uploads`);
+  console.log(`   Health      → ${process.env.HOST_URL}/api/health\n`);
 });
