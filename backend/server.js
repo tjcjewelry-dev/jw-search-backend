@@ -33,7 +33,7 @@ try {
 // In Railway dashboard: set ALLOWED_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map((s) => s.trim())
-  : ['http://localhost:5173', 'http://localhost:3000', 'https://tjc.me/', 'https://tjceternity.com/'];
+  : ['http://localhost:5173', 'http://localhost:3000', 'https://tjc.me', 'https://tjceternity.com'];
 
 console.log('[CORS] Allowed origins:', allowedOrigins);
 
