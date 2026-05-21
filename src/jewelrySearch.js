@@ -26,16 +26,17 @@
  *                           same jewelry category as the source item.
  */
 
-import { getPineconeIndex } from './pineconeClient.js';
-import { embedText }        from './embedder.js';
-import { autoTagImage, buildSearchableText } from './visionTagger.js';
+import { getPineconeIndex } from "./pineconeClient.js";
+import { embedText } from "./embedder.js";
+import { autoTagImage, buildSearchableText } from "./visionTagger.js";
+import { addJewelryImage } from "./jewelryStore.js";
 
 // ─── Score thresholds ─────────────────────────────────────────────────────────
 const SCORE = {
-  TEXT_SHORT:  0.30,  // 1–2 word queries ("round", "pear diamond")
-  TEXT_LONG:   0.45,  // 3+ word descriptive queries
-  IMAGE:       0.60,  // image search — visual similarity must be clear
-  SIMILAR:     0.65,  // find similar — must genuinely match source
+  TEXT_SHORT: 0.3, // 1–2 word queries ("round", "pear diamond")
+  TEXT_LONG: 0.45, // 3+ word descriptive queries
+  IMAGE: 0.6, // image search — visual similarity must be clear
+  SIMILAR: 0.65, // find similar — must genuinely match source
 };
 
 export const POOL_SIZE = 10000;
@@ -44,59 +45,59 @@ export const POOL_SIZE = 10000;
 // Maps every user-facing term → the uppercase value stored in Pinecone stoneShapes[]
 // Ordered longest-first so "elongated pear" matches before "pear"
 const STONE_SHAPE_MAP = [
-  ['elongated marquise',   'ELONGATED MARQUISE'],
-  ['elongated pear',       'ELONGATED PEAR'],
-  ['elongated oval',       'ELONGATED OVAL'],
-  ['elongated emerald',    'ELONGATED EMERALD'],
-  ['elongated radiant',    'ELONGATED RADIANT'],
-  ['elongated cushion',    'ELONGTED CUSHION'],
-  ['elongated baguette',   'ELONGTED BAGUETTE'],
-  ['step baguette',        'ELONGTED STEP BAGUETTE'],
-  ['half moon',            'HALF MOON'],
-  ['old mine',             'CUSHION-OLD-Mined CUT'],
-  ['old mined',            'CUSHION-OLD-Mined CUT'],
-  ['rose cut round',       'ROSECUT ROUND'],
-  ['round rose cut',       'ROUND RoseCut'],
-  ['pear rose cut',        'PEAR ROSE CUT'],
-  ['oval rose cut',        'OVAL ROSE CUT'],
-  ['rose cut',             'PEAR ROSE CUT'],    // generic rose cut → pear rose cut fallback
-  ['round cabochon',       'ROUND CABOCHON'],
-  ['square emerald',       'SQUARE EMERALD'],
-  ['square radiant',       'SQUARE RADIANT'],
-  ['fancy cut',            'FANCY CUT DIAMOND'],
-  ['trap baguette',        'TRAP BAGUETTE'],
-  ['taper baguette',       'TAPPER BAGUETTE'],
-  ['tapered baguette',     'TAPPER BAGUETTE'],
-  ['straight baguette',    'STRAIGHT BAGUETTE'],
-  ['long cushion',         'LONG CUSHION'],
-  ['long hexagon',         'LONG HEXAGONE'],
-  ['step trapezoid',       'STEP CUT TRAPEZOIDS'],
-  ['trillion',             'Trillion'],
-  ['trapezoid',            'TRAPEZOIDS'],
-  ['asscher',              'ASCHER'],
-  ['baguette',             'BAGUETTE'],
-  ['bullet',               'BULLET'],
-  ['cushion',              'CUSHION'],
-  ['emerald cut',          'EMERALD'],
-  ['emerald',              'EMERALD'],
-  ['heart',                'HEART'],
-  ['hexagon',              'HEXAGON'],
-  ['kite',                 'KITE'],
-  ['leaf',                 'LEAF'],
-  ['marquise',             'MARQUISE'],
-  ['moon',                 'MOON-STONE'],
-  ['octagon',              'OCTAGONAL'],
-  ['oval',                 'OVAL'],
-  ['pear',                 'PEAR'],
-  ['princess',             'PRINCESS'],
-  ['radiant',              'RADIANT'],
-  ['round',                'ROUND'],
-  ['rough',                'ROUGH'],
-  ['shield',               'Shield'],
-  ['square',               'SQUARE EMERALD'],  // "square" alone → square emerald
-  ['triangle',             'Triangle'],
-  ['mixed',                'MIX'],
-  ['mix',                  'MIX'],
+  ["elongated marquise", "ELONGATED MARQUISE"],
+  ["elongated pear", "ELONGATED PEAR"],
+  ["elongated oval", "ELONGATED OVAL"],
+  ["elongated emerald", "ELONGATED EMERALD"],
+  ["elongated radiant", "ELONGATED RADIANT"],
+  ["elongated cushion", "ELONGTED CUSHION"],
+  ["elongated baguette", "ELONGTED BAGUETTE"],
+  ["step baguette", "ELONGTED STEP BAGUETTE"],
+  ["half moon", "HALF MOON"],
+  ["old mine", "CUSHION-OLD-Mined CUT"],
+  ["old mined", "CUSHION-OLD-Mined CUT"],
+  ["rose cut round", "ROSECUT ROUND"],
+  ["round rose cut", "ROUND RoseCut"],
+  ["pear rose cut", "PEAR ROSE CUT"],
+  ["oval rose cut", "OVAL ROSE CUT"],
+  ["rose cut", "PEAR ROSE CUT"], // generic rose cut → pear rose cut fallback
+  ["round cabochon", "ROUND CABOCHON"],
+  ["square emerald", "SQUARE EMERALD"],
+  ["square radiant", "SQUARE RADIANT"],
+  ["fancy cut", "FANCY CUT DIAMOND"],
+  ["trap baguette", "TRAP BAGUETTE"],
+  ["taper baguette", "TAPPER BAGUETTE"],
+  ["tapered baguette", "TAPPER BAGUETTE"],
+  ["straight baguette", "STRAIGHT BAGUETTE"],
+  ["long cushion", "LONG CUSHION"],
+  ["long hexagon", "LONG HEXAGONE"],
+  ["step trapezoid", "STEP CUT TRAPEZOIDS"],
+  ["trillion", "Trillion"],
+  ["trapezoid", "TRAPEZOIDS"],
+  ["asscher", "ASCHER"],
+  ["baguette", "BAGUETTE"],
+  ["bullet", "BULLET"],
+  ["cushion", "CUSHION"],
+  ["emerald cut", "EMERALD"],
+  ["emerald", "EMERALD"],
+  ["heart", "HEART"],
+  ["hexagon", "HEXAGON"],
+  ["kite", "KITE"],
+  ["leaf", "LEAF"],
+  ["marquise", "MARQUISE"],
+  ["moon", "MOON-STONE"],
+  ["octagon", "OCTAGONAL"],
+  ["oval", "OVAL"],
+  ["pear", "PEAR"],
+  ["princess", "PRINCESS"],
+  ["radiant", "RADIANT"],
+  ["round", "ROUND"],
+  ["rough", "ROUGH"],
+  ["shield", "Shield"],
+  ["square", "SQUARE EMERALD"], // "square" alone → square emerald
+  ["triangle", "Triangle"],
+  ["mixed", "MIX"],
+  ["mix", "MIX"],
 ];
 
 // ─── Query Expander ───────────────────────────────────────────────────────────
@@ -113,7 +114,7 @@ const STONE_SHAPE_MAP = [
  * @returns {string} expanded query
  */
 function expandQuery(query) {
-  const q    = query.toLowerCase().trim();
+  const q = query.toLowerCase().trim();
   const words = q.split(/\s+/);
 
   // Only expand short queries — long ones are already descriptive
@@ -132,7 +133,15 @@ function expandQuery(query) {
   }
 
   // Metal only
-  const metalTerms = ['rose gold','pink gold','yellow gold','white gold','platinum','silver','two tone'];
+  const metalTerms = [
+    "rose gold",
+    "pink gold",
+    "yellow gold",
+    "white gold",
+    "platinum",
+    "silver",
+    "two tone",
+  ];
   if (metalTerms.some((t) => q === t)) {
     return `${query} jewelry metal color`;
   }
@@ -152,7 +161,7 @@ function expandQuery(query) {
  * @returns {object} raw filter map, e.g. { stoneShapes: ['ROUND'], metalColor: 'Rose Gold' }
  */
 export function extractFiltersFromQuery(query) {
-  const q     = query.toLowerCase().trim();
+  const q = query.toLowerCase().trim();
   const words = q.split(/[\s,.\-/]+/);
   const filters = {};
 
@@ -167,32 +176,35 @@ export function extractFiltersFromQuery(query) {
 
   // ── Metal color (scalar → $eq) ─────────────────────────────────────────────
   const metalTerms = [
-    ['rose gold',       'Rose Gold'],
-    ['pink gold',       'Rose Gold'],
-    ['yellow gold',     'Yellow Gold'],
-    ['white gold',      'White Gold'],
-    ['two tone',        'Two Tone'],
-    ['tri color',       'Tri Color'],
-    ['platinum',        'Platinum'],
-    ['sterling silver', 'Sterling Silver'],
-    ['silver',          'Sterling Silver'],
+    ["rose gold", "Rose Gold"],
+    ["pink gold", "Rose Gold"],
+    ["yellow gold", "Yellow Gold"],
+    ["white gold", "White Gold"],
+    ["two tone", "Two Tone"],
+    ["tri color", "Tri Color"],
+    ["platinum", "Platinum"],
+    ["sterling silver", "Sterling Silver"],
+    ["silver", "Sterling Silver"],
   ];
   for (const [term, value] of metalTerms) {
-    if (q.includes(term)) { filters.metalColor = value; break; }
+    if (q.includes(term)) {
+      filters.metalColor = value;
+      break;
+    }
   }
 
   // ── Category (scalar → $eq) ───────────────────────────────────────────────
   // Use word-boundary matching to prevent "ring" matching inside "earring"
   const categoryTerms = [
-    [['earring', 'earrings', 'stud', 'studs', 'hoop', 'hoops'],  'Earring'],
-    [['ring', 'rings', 'band', 'bands', 'solitaire'],             'Ring'],
-    [['pendant', 'pendants', 'charm'],                             'Pendant'],
-    [['bracelet', 'bracelets'],                                    'Bracelet'],
-    [['bangle', 'bangles'],                                        'Bangle'],
-    [['necklace', 'necklaces', 'chain'],                          'Necklace'],
-    [['brooch'],                                                    'Brooch'],
-    [['anklet', 'anklets'],                                        'Anklet'],
-    [['nose pin', 'nose ring'],                                    'Nose Pin'],
+    [["earring", "earrings", "stud", "studs", "hoop", "hoops"], "Earring"],
+    [["ring", "rings", "band", "bands", "solitaire"], "Ring"],
+    [["pendant", "pendants", "charm"], "Pendant"],
+    [["bracelet", "bracelets"], "Bracelet"],
+    [["bangle", "bangles"], "Bangle"],
+    [["necklace", "necklaces", "chain"], "Necklace"],
+    [["brooch"], "Brooch"],
+    [["anklet", "anklets"], "Anklet"],
+    [["nose pin", "nose ring"], "Nose Pin"],
   ];
   for (const [terms, value] of categoryTerms) {
     if (terms.some((t) => words.includes(t))) {
@@ -203,9 +215,25 @@ export function extractFiltersFromQuery(query) {
 
   // ── Gemstone (scalar → $eq) ───────────────────────────────────────────────
   const gemstoneTerms = [
-    'ruby','sapphire','emerald','topaz','amethyst','citrine','garnet',
-    'peridot','tanzanite','morganite','aquamarine','opal','diamond',
-    'pearl','turquoise','spinel','tourmaline','moonstone','alexandrite',
+    "ruby",
+    "sapphire",
+    "emerald",
+    "topaz",
+    "amethyst",
+    "citrine",
+    "garnet",
+    "peridot",
+    "tanzanite",
+    "morganite",
+    "aquamarine",
+    "opal",
+    "diamond",
+    "pearl",
+    "turquoise",
+    "spinel",
+    "tourmaline",
+    "moonstone",
+    "alexandrite",
   ];
   for (const gem of gemstoneTerms) {
     if (q.includes(gem)) {
@@ -226,14 +254,14 @@ export function extractFiltersFromQuery(query) {
  *
  * UI filters take priority over query-extracted filters.
  */
-const ARRAY_FIELDS = new Set(['stoneShapes', 'stoneType', 'component']);
+const ARRAY_FIELDS = new Set(["stoneShapes", "stoneType", "component"]);
 
 function buildPineconeFilter(queryFilters, uiFilters = {}) {
   const merged = { ...queryFilters };
 
   // UI filters override query-extracted ones field by field
   for (const [key, val] of Object.entries(uiFilters)) {
-    if (val !== undefined && val !== null && val !== '') merged[key] = val;
+    if (val !== undefined && val !== null && val !== "") merged[key] = val;
   }
 
   if (!Object.keys(merged).length) return null;
@@ -257,36 +285,39 @@ function buildPineconeFilter(queryFilters, uiFilters = {}) {
 }
 
 // ─── 1. Text Search ───────────────────────────────────────────────────────────
-export async function searchByText(query, { topK = POOL_SIZE, filter = {}, minScore } = {}) {
+export async function searchByText(
+  query,
+  { topK = POOL_SIZE, filter = {}, minScore } = {},
+) {
   console.log(`\n🔍 Searching: "${query}"`);
 
   // Expand short/vague queries before embedding
-  const expandedQuery  = expandQuery(query);
+  const expandedQuery = expandQuery(query);
   if (expandedQuery !== query) {
     console.log(`  → Expanded: "${expandedQuery}"`);
   }
 
   // Adaptive threshold — shorter original queries get more lenient cutoff
-  const wordCount      = query.trim().split(/\s+/).length;
+  const wordCount = query.trim().split(/\s+/).length;
   const defaultThreshold = wordCount <= 2 ? SCORE.TEXT_SHORT : SCORE.TEXT_LONG;
-  const threshold      = minScore ?? defaultThreshold;
+  const threshold = minScore ?? defaultThreshold;
 
-  const queryFilters   = extractFiltersFromQuery(query);
+  const queryFilters = extractFiltersFromQuery(query);
   const pineconeFilter = buildPineconeFilter(queryFilters, filter);
 
-  console.log(`  → Threshold: ${threshold} | Filters: ${JSON.stringify(pineconeFilter)}`);
+  console.log(
+    `  → Threshold: ${threshold} | Filters: ${JSON.stringify(pineconeFilter)}`,
+  );
 
   const queryEmbedding = await embedText(expandedQuery);
-  const index          = await getPineconeIndex();
+  const index = await getPineconeIndex();
 
   const params = { vector: queryEmbedding, topK, includeMetadata: true };
   if (pineconeFilter) params.filter = pineconeFilter;
 
   const { matches } = await index.query(params);
 
-  const results = matches
-    .filter((m) => m.score >= threshold)
-    .map(formatResult);
+  const results = matches.filter((m) => m.score >= threshold).map(formatResult);
 
   console.log(`  → ${results.length} result(s)`);
   return results;
@@ -296,7 +327,7 @@ export async function searchByText(query, { topK = POOL_SIZE, filter = {}, minSc
 export async function searchByImage(fileBuffer, fileName, opts = {}) {
   console.log(`\n🖼️  Searching by image: ${fileName}`);
 
-  const tags      = await autoTagImage(fileBuffer, fileName);
+  const tags = await autoTagImage(fileBuffer, fileName);
   const queryText = buildSearchableText(tags);
 
   const imageFilters = {};
@@ -308,8 +339,8 @@ export async function searchByImage(fileBuffer, fileName, opts = {}) {
   console.log(`  → Filters: ${JSON.stringify(imageFilters)}`);
 
   return searchByText(queryText, {
-    topK:     opts.topK ?? POOL_SIZE,
-    filter:   imageFilters,
+    topK: opts.topK ?? POOL_SIZE,
+    filter: imageFilters,
     minScore: opts.minScore ?? SCORE.IMAGE,
   });
 }
@@ -318,18 +349,18 @@ export async function searchByImage(fileBuffer, fileName, opts = {}) {
 export async function findSimilar(id, topK = POOL_SIZE, lockCategory = true) {
   console.log(`\n🔗 Finding similar to: ${id}`);
 
-  const index   = await getPineconeIndex();
+  const index = await getPineconeIndex();
   const fetched = await index.fetch([id]);
-  const item    = fetched.vectors?.[id];
+  const item = fetched.vectors?.[id];
 
   if (!item) throw new Error(`Item not found: ${id}`);
 
-  const category   = item.metadata?.category;
+  const category = item.metadata?.category;
   const stoneShapes = item.metadata?.stoneShapes;
 
   const params = {
-    vector:          item.values,
-    topK:            topK + 1,
+    vector: item.values,
+    topK: topK + 1,
     includeMetadata: true,
   };
 
@@ -360,46 +391,151 @@ export async function findSimilar(id, topK = POOL_SIZE, lockCategory = true) {
 export async function browseByFilter(filter, topK = POOL_SIZE) {
   console.log(`\n📋 Browsing:`, filter);
   const pineconeFilter = buildPineconeFilter({}, filter);
-  const index          = await getPineconeIndex();
-  const embedding      = await embedText('jewelry');
-  const params         = { vector: embedding, topK, includeMetadata: true };
+  const index = await getPineconeIndex();
+  const embedding = await embedText("jewelry");
+  const params = { vector: embedding, topK, includeMetadata: true };
   if (pineconeFilter) params.filter = pineconeFilter;
-  const { matches }    = await index.query(params);
+  const { matches } = await index.query(params);
   return matches.map(formatResult);
 }
 
 // ─── Formatter ────────────────────────────────────────────────────────────────
 function formatResult(match) {
   return {
-    id:            match.id,
-    score:         Math.round(match.score * 1000) / 1000,
-    fileName:      match.metadata?.fileName,
-    imageUrl:      match.metadata?.imageUrl,
-    sku:           match.metadata?.sku,
-    title:         match.metadata?.title,
-    category:      match.metadata?.category,
-    subCategory:   match.metadata?.subCategory,
-    jewelryType:   match.metadata?.jewelryType,
-    centerStone:   match.metadata?.centerStone,
-    metalColor:    match.metadata?.metalColor,
-    gemstone:      match.metadata?.gemstone,
-    settingStyle:  match.metadata?.settingStyle,
-    stoneShapes:   match.metadata?.stoneShapes,
-    stoneType:     match.metadata?.stoneType,
+    id: match.id,
+    score: Math.round(match.score * 1000) / 1000 ?? 0,
+    fileName: match.metadata?.fileName,
+    imageUrl: match.metadata?.imageUrl,
+    sku: match.metadata?.sku,
+    title: match.metadata?.title,
+    category: match.metadata?.category,
+    subCategory: match.metadata?.subCategory,
+    jewelryType: match.metadata?.jewelryType,
+    centerStone: match.metadata?.centerStone,
+    metalColor: match.metadata?.metalColor,
+    gemstone: match.metadata?.gemstone,
+    settingStyle: match.metadata?.settingStyle,
+    stoneShapes: match.metadata?.stoneShapes,
+    stoneType: match.metadata?.stoneType,
     styleKeywords: match.metadata?.styleKeywords,
-    description:   match.metadata?.description,
-    metadata:      match.metadata,
+    description: match.metadata?.description,
+    metadata: match.metadata,
   };
 }
 
 export function printResults(results) {
-  if (!results.length) { console.log('  No results found.'); return; }
-  console.log('\n┌─ Results ──────────────────────────────────────────');
+  if (!results.length) {
+    console.log("  No results found.");
+    return;
+  }
+  console.log("\n┌─ Results ──────────────────────────────────────────");
   results.forEach((r, i) => {
     console.log(`│ ${i + 1}. [${r.score}] ${r.title || r.fileName || r.id}`);
-    console.log(`│    Category: ${r.category || 'N/A'} | Metal: ${r.metalColor || 'N/A'} | Shapes: ${r.stoneShapes?.join(', ') || 'N/A'}`);
+    console.log(
+      `│    Category: ${r.category || "N/A"} | Metal: ${r.metalColor || "N/A"} | Shapes: ${r.stoneShapes?.join(", ") || "N/A"}`,
+    );
     if (r.description) console.log(`│    "${r.description}"`);
-    console.log('│');
+    console.log("│");
   });
-  console.log('└────────────────────────────────────────────────────');
+  console.log("└────────────────────────────────────────────────────");
+}
+
+/* editing pinecone metadata - started */
+/* ─── Edit / Re-tag existing item ─────────────────────────────────────────── */
+
+/**
+ * editProductTag — re-tags a single existing Pinecone record.
+ *
+ * Steps:
+ *   1. Fetch current metadata from Pinecone (source of truth for existing tags)
+ *   2. Download the live image from its stored URL
+ *   3. Send image + existing tags + user correction to GPT-4o Mini (refinement mode)
+ *      → model only patches fields the correction mentions; all others are preserved
+ *   4. Upsert the updated vector + metadata back to Pinecone
+ *   5. Return the freshly-fetched record as a formatted result object
+ *
+ * @param {string} id         — Pinecone vector ID / SKU
+ * @param {string} userPrompt — natural language correction, e.g. "metal is rose gold not yellow"
+ */
+export async function editProductTag(id, userPrompt) {
+  const index = await getPineconeIndex();
+
+  // ── 1. Fetch current record ─────────────────────────────────────────────
+  const fetchResponse = await index.fetch([id]);
+  // Pinecone SDK v3 uses .records; v2 uses .vectors — handle both
+  const record = fetchResponse.records?.[id] ?? fetchResponse.vectors?.[id];
+  if (!record || !record.metadata) {
+    throw new Error(`Record not found with id: ${id}`);
+  }
+  const metadata = record.metadata;
+
+  // ── 2. Download live image ──────────────────────────────────────────────
+  const { fileBuffer, fileName } = await fetchImageBuffer(metadata.imageUrl);
+
+  // ── 3. Re-tag with correction (refinement mode) ─────────────────────────
+  //    Pass the current metadata as existingTags so the model only patches
+  //    what the user explicitly asks to change.
+  const existingTags = extractEditableTags(metadata);
+  const updatedTags  = await autoTagImage(fileBuffer, fileName, existingTags, userPrompt);
+
+  // ── 4. Rebuild searchable text + embedding, upsert to Pinecone ──────────
+  await addJewelryImage({
+    imageUrl:   metadata.imageUrl,
+    fileName:   metadata.fileName || fileName,
+    fileBuffer,
+    sku:        id,             // same ID → upsert overwrites the existing record
+    tags:       updatedTags,
+    autoTag:    false,          // skip fresh re-tagging; we already have updatedTags
+  });
+
+  // ── 5. Fetch the updated record and return it ────────────────────────────
+  const updated = await index.fetch([id]);
+  const updatedRecord = updated.records?.[id] ?? updated.vectors?.[id];
+  if (!updatedRecord) throw new Error(`Failed to fetch updated record: ${id}`);
+  return formatResult(updatedRecord);
+}
+
+/**
+ * bulkEditProductTags — apply one prompt to multiple items in sequence.
+ *
+ * @param {string[]} ids        — array of Pinecone IDs to update
+ * @param {string}   userPrompt — same correction applied to each item
+ * @returns {{ id, success, result?, error? }[]}
+ */
+export async function bulkEditProductTags(ids, userPrompt) {
+  const results = [];
+  for (const id of ids) {
+    try {
+      const result = await editProductTag(id, userPrompt);
+      results.push({ id, success: true, result });
+    } catch (err) {
+      console.error(`[BulkEdit] Failed for ${id}:`, err.message);
+      results.push({ id, success: false, error: err.message });
+    }
+  }
+  return results;
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+async function fetchImageBuffer(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Failed to fetch image: ${url} (${response.status})`);
+  const arrayBuffer = await response.arrayBuffer();
+  const fileBuffer  = Buffer.from(arrayBuffer);
+  // Extract filename from URL path
+  const fileName = new URL(url).pathname.split('/').pop() || 'image.jpg';
+  return { fileBuffer, fileName };
+}
+
+function extractEditableTags(metadata) {
+  // Only pass tag fields to the AI — not internal fields like imageUrl, addedAt, etc.
+  const TAG_FIELDS = [
+    'category','subCategory','stoneType','stoneShapes','metalColor',
+    'prong','shank','diamondColor','gemstone','cut','component',
+    'hasRhodium','settingStyle','occasion','estimatedStoneCount','description',
+  ];
+  return Object.fromEntries(
+    TAG_FIELDS.map((k) => [k, metadata[k] ?? null])
+  );
 }

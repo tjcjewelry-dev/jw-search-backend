@@ -37,6 +37,8 @@ export async function addJewelryImage({
   sku,
   tags: manualTags = {},
   autoTag = true,
+  editableData=null,
+  userPrompt=null
 }) {
   console.log(`\n━━━ Adding: ${fileName} ━━━`);
   /**
@@ -48,7 +50,7 @@ export async function addJewelryImage({
   if (autoTag) {
     console.log("  → Auto-tagging with GPT-4o Mini...");
     // now pass URL instead of local path
-    autoTags = await autoTagImage(fileBuffer, fileName);
+    autoTags = await autoTagImage(fileBuffer, fileName, editableData, userPrompt);
     console.log("  → Tags:", JSON.stringify(autoTags, null, 4));
   }
 
