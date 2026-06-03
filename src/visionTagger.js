@@ -1,9 +1,23 @@
 /**
  * Vision Tagger — GPT-4o Mini Vision → structured jewelry tags
  *
- * Two modes:
- *   autoTagImage(buffer, name)                    → fresh tag from image
- *   autoTagImage(buffer, name, existing, prompt)  → targeted patch of existing tags
+ * Three modes, selected automatically:
+ *
+ *   1. FEW-SHOT (lessons available, fresh tag)
+ *      Training lessons are sent as user/assistant example pairs BEFORE the new
+ *      image. The model learns "miracle plate looks like this → these tags" from
+ *      your examples, then applies that knowledge to the new image.
+ *
+ *   2. REFINEMENT (existingTags + userPrompt provided)
+ *      Targeted correction of a specific field. Does not use lessons.
+ *
+ *   3. STANDARD (no lessons, no correction)
+ *      Plain analysis prompt. Fallback when no lessons are defined yet.
+ *
+ * Few-shot token cost:
+ *   Each lesson = ~85 tokens (image, detail:low) + ~150 tokens (name + tags JSON)
+ *   6 lessons ≈ 1,400 extra input tokens per call
+ *   At gpt-4o-mini pricing ($0.15/1M) ≈ $0.00021 extra per image tagged
  */
 
 import OpenAI from 'openai';
@@ -12,7 +26,7 @@ import { prepareImageForAPI } from './imageProcessor.js';
 
 const openai = new OpenAI({ apiKey: config.openai.apiKey });
 
-// ─── Schema prompt (used for fresh tagging only) ───────────────────────────
+// ─── Schema prompt ─────────────────────────────────────────────────────────
 const JEWELRY_ANALYSIS_PROMPT = `You are an expert jewelry cataloger. Analyze this jewelry image carefully and extract structured tags.
 
 Return ONLY a valid JSON object with these exact keys. Use null for anything not visible or not applicable.
@@ -43,7 +57,6 @@ Rules:
 - Return ONLY the JSON. No markdown. No explanation. No code fences.`;
 
 // ─── Refinement system prompt ──────────────────────────────────────────────
-// Deliberately short — model only patches, never re-generates from scratch
 const REFINEMENT_SYSTEM_PROMPT = `You are a jewelry tag editor. You will receive:
 1. An image of a jewelry piece
 2. Its current JSON tags
@@ -53,67 +66,191 @@ Your job: apply ONLY the correction to the JSON. Do NOT change any field that th
 
 Return ONLY the corrected JSON object. Same structure. No markdown. No explanation.`;
 
-// ─── Main Export ───────────────────────────────────────────────────────────
+// ─── Message builders ──────────────────────────────────────────────────────
+
 /**
- * @param {Buffer}      fileBuffer
- * @param {string}      fileName
- * @param {object|null} existingTags  — current metadata (for refinement mode)
- * @param {string|null} userPrompt    — correction instruction (for refinement mode)
+ * Build few-shot messages from training lessons.
+ *
+ * Format — multi-turn conversation:
+ *   system: "You are a jewelry cataloger. Learn from these examples."
+ *   user:   [lesson1 image] + "Lesson: X. Correct tags: {...}"
+ *   assistant: {correct tags JSON}
+ *   user:   [lesson2 image] + "Lesson: Y. Correct tags: {...}"
+ *   assistant: {correct tags JSON}
+ *   ...
+ *   user:   [NEW image] + full analysis prompt
+ *
+ * The model sees the pattern: "when I show you an example with its answer,
+ * learn from it; then apply that knowledge to the final image."
  */
-export async function autoTagImage(fileBuffer, fileName, existingTags = null, userPrompt = null) {
+function buildFewShotMessages(lessons, newBase64, newMediaType) {
+  const messages = [];
+
+  // System message — sets the learning context
+  const lessonSummary = lessons
+    .map((l) => `"${l.name}"${l.description ? ` (${l.description})` : ''}`)
+    .join(', ');
+
+  messages.push({
+    role: 'system',
+    content: [
+      `You are an expert jewelry cataloger. You have been trained on specific visual patterns by your team.`,
+      `In this session you will first be shown ${lessons.length} training example${lessons.length !== 1 ? 's' : ''} `,
+      `with their correct tags: ${lessonSummary}.`,
+      `Learn exactly how each visual pattern maps to tag values.`,
+      `Then you will analyze a new jewelry image using those learned patterns `,
+      `plus your general jewelry knowledge.`,
+    ].join(''),
+  });
+
+  // One user/assistant pair per lesson
+  for (const lesson of lessons) {
+    // Strip nulls and internal fields from the example tags
+    const exampleTags = Object.fromEntries(
+      Object.entries(lesson.tags)
+        .filter(([, v]) => v !== null && v !== undefined)
+    );
+
+    messages.push({
+      role: 'user',
+      content: [
+        {
+          type: 'image_url',
+          image_url: {
+            url:    `data:${lesson.mediaType};base64,${lesson.imageBase64}`,
+            detail: 'low',
+          },
+        },
+        {
+          type: 'text',
+          text: [
+            `Training example: "${lesson.name}"`,
+            lesson.description ? `What to look for: ${lesson.description}` : null,
+            `Correct tags for this image:`,
+            JSON.stringify(exampleTags, null, 2),
+          ].filter(Boolean).join('\n'),
+        },
+      ],
+    });
+
+    // Assistant confirms it learned the example
+    messages.push({
+      role: 'assistant',
+      content: JSON.stringify(exampleTags),
+    });
+  }
+
+  // Final turn — the new image to tag
+  messages.push({
+    role: 'user',
+    content: [
+      {
+        type: 'image_url',
+        image_url: {
+          url:    `data:${newMediaType};base64,${newBase64}`,
+          detail: 'low',
+        },
+      },
+      {
+        type: 'text',
+        text: [
+          `Now analyze this new jewelry image.`,
+          `Apply the visual patterns you learned from the training examples above,`,
+          `combined with your general jewelry expertise.`,
+          ``,
+          JEWELRY_ANALYSIS_PROMPT,
+        ].join('\n'),
+      },
+    ],
+  });
+
+  return messages;
+}
+
+function buildRefinementMessages(existingTags, userPrompt, base64, mediaType) {
+  const cleanExisting = Object.fromEntries(
+    Object.entries(existingTags).filter(([, v]) => v !== null && v !== undefined)
+  );
+  return [
+    { role: 'system', content: REFINEMENT_SYSTEM_PROMPT },
+    {
+      role: 'user',
+      content: [
+        {
+          type: 'image_url',
+          image_url: { url: `data:${mediaType};base64,${base64}`, detail: 'low' },
+        },
+        {
+          type: 'text',
+          text: [
+            'Current tags:',
+            JSON.stringify(cleanExisting, null, 2),
+            '',
+            'User correction:',
+            userPrompt.trim(),
+            '',
+            'Return the full corrected JSON object.',
+          ].join('\n'),
+        },
+      ],
+    },
+  ];
+}
+
+function buildStandardMessages(base64, mediaType) {
+  return [
+    {
+      role: 'user',
+      content: [
+        {
+          type: 'image_url',
+          image_url: { url: `data:${mediaType};base64,${base64}`, detail: 'low' },
+        },
+        { type: 'text', text: JEWELRY_ANALYSIS_PROMPT },
+      ],
+    },
+  ];
+}
+
+// ─── Main export ───────────────────────────────────────────────────────────
+
+/**
+ * Tag a jewelry image using GPT-4o Mini Vision.
+ *
+ * @param {Buffer}      fileBuffer    — image file buffer
+ * @param {string}      fileName      — original filename (used for media type detection)
+ * @param {object|null} existingTags  — current metadata (activates refinement mode)
+ * @param {string|null} userPrompt    — correction instruction (activates refinement mode)
+ * @param {object[]}    lessons       — training examples from trainingStore.getLessonsForPrompt()
+ */
+export async function autoTagImage(
+  fileBuffer,
+  fileName,
+  existingTags = null,
+  userPrompt   = null,
+  lessons      = [],
+) {
   console.log('  [Vision] Resizing image...');
   const { base64, mediaType } = await prepareImageForAPI(fileBuffer, fileName);
 
   const isRefinement = existingTags !== null && userPrompt !== null;
-  console.log(`  [Vision] Mode: ${isRefinement ? 'refinement' : 'fresh tag'}`);
-
-  let messages;
+  const hasFewShot   = lessons.length > 0 && !isRefinement;
 
   if (isRefinement) {
-    // ── Refinement: only patch what the user asked to change ────────────────
-    // Strip null/undefined from existing tags to keep the message compact
-    const cleanExisting = Object.fromEntries(
-      Object.entries(existingTags).filter(([, v]) => v !== null && v !== undefined)
-    );
-
-    messages = [
-      { role: 'system', content: REFINEMENT_SYSTEM_PROMPT },
-      {
-        role: 'user',
-        content: [
-          {
-            type: 'image_url',
-            image_url: { url: `data:${mediaType};base64,${base64}`, detail: 'low' },
-          },
-          {
-            type: 'text',
-            text: [
-              'Current tags:',
-              JSON.stringify(cleanExisting, null, 2),
-              '',
-              'User correction:',
-              userPrompt.trim(),
-              '',
-              'Return the full corrected JSON object.',
-            ].join('\n'),
-          },
-        ],
-      },
-    ];
+    console.log(`  [Vision] Mode: refinement`);
+  } else if (hasFewShot) {
+    console.log(`  [Vision] Mode: few-shot (${lessons.length} training example${lessons.length !== 1 ? 's' : ''})`);
   } else {
-    // ── Fresh tag: full analysis ────────────────────────────────────────────
-    messages = [
-      {
-        role: 'user',
-        content: [
-          {
-            type: 'image_url',
-            image_url: { url: `data:${mediaType};base64,${base64}`, detail: 'low' },
-          },
-          { type: 'text', text: JEWELRY_ANALYSIS_PROMPT },
-        ],
-      },
-    ];
+    console.log(`  [Vision] Mode: standard (no training examples yet)`);
+  }
+
+  let messages;
+  if (isRefinement) {
+    messages = buildRefinementMessages(existingTags, userPrompt, base64, mediaType);
+  } else if (hasFewShot) {
+    messages = buildFewShotMessages(lessons, base64, mediaType);
+  } else {
+    messages = buildStandardMessages(base64, mediaType);
   }
 
   const response = await openai.chat.completions.create({
@@ -127,16 +264,11 @@ export async function autoTagImage(fileBuffer, fileName, existingTags = null, us
     const jsonText = raw.replace(/```json\n?|```\n?/g, '').trim();
     const tags = JSON.parse(jsonText);
     console.log('  [Vision] Tags extracted successfully.');
-
-    // In refinement mode, merge result back onto existing so no field is lost
-    if (isRefinement) {
-      return { ...existingTags, ...tags };
-    }
-    return tags;
-  } catch (err) {
-    console.warn('  [Vision] Failed to parse JSON — returning existing tags with description update.');
-    if (isRefinement) return existingTags;
-    return { description: raw.slice(0, 500) };
+    // In refinement mode, merge result back so no field is accidentally lost
+    return isRefinement ? { ...existingTags, ...tags } : tags;
+  } catch {
+    console.warn('  [Vision] Failed to parse JSON response.');
+    return isRefinement ? existingTags : { description: raw.slice(0, 500) };
   }
 }
 
@@ -156,20 +288,20 @@ export function buildSearchableText(tags) {
 
   addValue(tags.category);
   addValue(tags.subCategory);
-  if (tags.settingStyle)  parts.push(`${tags.settingStyle} setting`);
-  if (tags.centerStone)   parts.push(`${tags.centerStone} center stone`);
+  if (tags.settingStyle)        parts.push(`${tags.settingStyle} setting`);
+  if (tags.centerStone)         parts.push(`${tags.centerStone} center stone`);
   addValue(tags.stoneType);
   addValue(tags.stoneShapes, ' stone shape');
   addValue(tags.metalColor);
-  if (tags.prong)         parts.push(`${tags.prong} prong`);
-  if (tags.shank)         parts.push(`${tags.shank} shank`);
-  if (tags.diamondColor)  parts.push(`${tags.diamondColor} diamond`);
+  if (tags.prong)               parts.push(`${tags.prong} prong`);
+  if (tags.shank)               parts.push(`${tags.shank} shank`);
+  if (tags.diamondColor)        parts.push(`${tags.diamondColor} diamond`);
   addValue(tags.gemstone);
-  if (tags.cut)           parts.push(`${tags.cut} cut`);
+  if (tags.cut)                 parts.push(`${tags.cut} cut`);
   addValue(tags.component);
   if (tags.hasRhodium === true) parts.push('rhodium plated');
-  if (tags.occasion)      parts.push(`${tags.occasion} jewelry`);
-  if (tags.description)   parts.push(tags.description);
+  if (tags.occasion)            parts.push(`${tags.occasion} jewelry`);
+  if (tags.description)         parts.push(tags.description);
 
   return parts.join('. ');
 }
