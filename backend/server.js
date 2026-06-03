@@ -6,20 +6,24 @@
  */
 
 import 'dotenv/config';
-import express from 'express';
-import cors from 'cors';
-import path from 'path';
+import express    from 'express';
+import cors       from 'cors';
+import path       from 'path';
 import { fileURLToPath } from 'url';
-import fs from 'fs';
+import fs         from 'fs';
 import { validateConfig } from '../src/config.js';
-import jewelryRoutes from './routes/jewelry.routes.js';
+import jewelryRoutes  from './routes/jewelry.routes.js';
+import trainingRoutes from './routes/training.routes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT      = process.env.PORT || 3001;
 
-// ── Uploads dir ───────────────────────────────────────────────────────────────
-const uploadsDir = path.join(__dirname, '..', 'uploads');
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+// ── Ensure required directories exist ─────────────────────────────────────────
+const uploadsDir     = path.join(__dirname, '..', 'uploads');
+const trainingDir    = path.join(__dirname, '..', 'training-data');
+[uploadsDir, trainingDir].forEach((d) => {
+  if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+});
 
 // ── Config validation ─────────────────────────────────────────────────────────
 try {
@@ -30,7 +34,6 @@ try {
 }
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
-// In Railway dashboard: set ALLOWED_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map((s) => s.trim())
   : ['http://localhost:5173', 'http://localhost:3000', 'https://tjc.me', 'https://tjceternity.com'];
@@ -41,7 +44,6 @@ const app = express();
 
 app.use(cors({
   origin: (origin, cb) => {
-    // Allow server-to-server (no origin) and listed origins
     if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
     cb(new Error(`CORS blocked: ${origin}`));
   },
@@ -50,19 +52,28 @@ app.use(cors({
 
 app.use(express.json());
 app.use('/uploads', express.static(uploadsDir));
-app.use('/api/jewelry', jewelryRoutes);
 
-app.get('/api/health', (req, res) =>
-  res.json({ status: 'ok', port: PORT, origins: allowedOrigins })
-);
+// ── Routes ────────────────────────────────────────────────────────────────────
+app.use('/api/jewelry',  jewelryRoutes);
+app.use('/api/training', trainingRoutes);
 
+// ── Health ────────────────────────────────────────────────────────────────────
+app.get('/api/health', (req, res) => {
+  const lessonCount = (() => {
+    const f = path.join(__dirname, '..', 'training-data', 'lessons.json');
+    try { return JSON.parse(fs.readFileSync(f, 'utf8')).length; } catch { return 0; }
+  })();
+  res.json({ status: 'ok', port: PORT, origins: allowedOrigins, trainingLessons: lessonCount });
+});
+
+// ── Error handler ─────────────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
   console.error('[Error]', err.message);
   res.status(err.status || 500).json({ error: err.message });
 });
 
 app.listen(PORT, () => {
-  console.log(`\n💎  Jewelry API → ${process.env.HOST_URL}`);
-  console.log(`   Uploads     → ${process.env.HOST_URL}/uploads`);
-  console.log(`   Health      → ${process.env.HOST_URL}/api/health\n`);
+  console.log(`\n💎  Jewelry API → ${process.env.HOST_URL || `http://localhost:${PORT}`}`);
+  console.log(`   Uploads     → ${process.env.HOST_URL || `http://localhost:${PORT}`}/uploads`);
+  console.log(`   Health      → ${process.env.HOST_URL || `http://localhost:${PORT}`}/api/health\n`);
 });
