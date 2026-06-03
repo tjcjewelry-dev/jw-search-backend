@@ -23,6 +23,7 @@ import {
   bulkEditProductTags,
 } from "../../src/jewelrySearch.js";
 import { getIndexStats, deleteJewelry } from "../../src/pineconeClient.js";
+import { extractPublicImages } from "../util/api-functions.js";
 
 const router = Router();
 
@@ -188,6 +189,16 @@ router.delete("/:id", async (req, res) => {
     res.json({ success: true, id: req.params.id });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// extract images
+router.post("/extract-images", async (req, res) => {
+  try {
+    const results = await extractPublicImages(req.body.urls);
+    res.json({ success: true, results });
+  } catch(err) {
+    res.status(400).json({ error: err.message });
   }
 });
 
